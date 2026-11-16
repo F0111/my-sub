@@ -4,10 +4,6 @@
 """
 سیستم جامع جمع‌آوری، پالایش، حذف موارد مشابه و تست هوشمند کانفیگ‌های V2Ray و Sing-box
 پشتیبانی از پروتکل‌های: VLESS (Reality/WS/gRPC/XHTTP), VMess, Trojan, Shadowsocks, Hysteria2, TUIC
-قابلیت استخراج از:
-  1. کانال‌های عمومی تلگرام (بدون نیاز به اکانت از طریق وب)
-  2. گروه‌ها و کانال‌های خصوصی/عمومی تلگرام (از طریق Telethon در صورت تنظیم متغیرهای محیطی)
-  3. لینک‌های اشتراک (Subscription) خارجی
 """
 
 import asyncio
@@ -26,11 +22,7 @@ from typing import Dict, List, Optional
 
 import aiohttp
 
-# ==============================================================================
-# ۱. بخش تنظیمات و منابع (لیست کانال‌ها و گروه‌های خود را اینجا قرار دهید)
-# ==============================================================================
-
-# لیست کانال‌های تلگرامی (می‌توانید نام کاربری با @، بدون @ یا لینک کامل t.me وارد کنید)
+# لیست کانال‌های تلگرامی
 TELEGRAM_CHANNELS: List[str] = [
     "https://t.me/LonUp_M",
     "https://t.me/prrofile_purple",
@@ -43,31 +35,21 @@ TELEGRAM_CHANNELS: List[str] = [
     "https://t.me/ShadowProxy66",
 ]
 
-# لینک‌های اشتراک (Subscription) خارجی اختیاری برای ادغام
-EXTERNAL_SUB_URLS: List[str] = [
-    # اگر لینک ساب دیگری دارید می‌توانید اینجا اضافه کنید
-]
+EXTERNAL_SUB_URLS: List[str] = []
 
-# تنظیمات تست و بهینه‌سازی
-MAX_CONCURRENT_TESTS = 80       # تعداد تست همزمان
-CONNECTION_TIMEOUT = 3.5        # حداکثر زمان انتظار برای تست اتصال (ثانیه)
-MAX_FINAL_CONFIGS = 500         # حداکثر تعداد بهترین کانفیگ‌ها در فایل نهایی
-OUTPUT_DIR = Path("sub")        # پوشه خروجی فایل‌های اشتراک
-CUSTOM_TAG = "Verified"         # تگ اختصاصی شما که در انتهای نام کانفیگ‌ها درج می‌شود
+MAX_CONCURRENT_TESTS = 80
+CONNECTION_TIMEOUT = 3.5
+MAX_FINAL_CONFIGS = 500
+OUTPUT_DIR = Path("sub")
+CUSTOM_TAG = "Verified"
 
-# عبارات باقاعده (Regex) برای شکار تمام پروتکل‌های استاندارد و نسل جدید
 PROTOCOL_REGEX = re.compile(
     r"(?:vless|vmess|trojan|ss|ssr|hy2|hysteria2|tuic)://[^\s<>\"'`\)\]\u0600-\u06FF]+",
     re.IGNORECASE,
 )
 
 
-# ==============================================================================
-# ۲. ابزارهای کمکی کدگشایی و نرمال‌سازی
-# ==============================================================================
-
 def safe_base64_decode(data: str) -> str:
-    """کدگشایی ایمن Base64 حتی در صورت ناقص بودن علامت‌های = در انتهای رشته."""
     try:
         cleaned = data.strip().replace("\n", "").replace("\r", "").replace(" ", "")
         missing_padding = len(cleaned) % 4
@@ -80,25 +62,17 @@ def safe_base64_decode(data: str) -> str:
 
 
 def safe_base64_encode(text: str) -> str:
-    """تبدیل متن به فرمت استاندارد Base64 بدون خط شکسته."""
     return base64.b64encode(text.encode("utf-8")).decode("utf-8")
 
 
 def country_code_to_flag(country_code: str) -> str:
-    """تبدیل کد دوحرفی کشور (مثل DE یا NL) به ایموجی پرچم."""
     if not country_code or len(country_code) != 2 or not country_code.isalpha():
         return "🌐"
     code = country_code.upper()
     return chr(ord(code[0]) + 127397) + chr(ord(code[1]) + 127397)
 
 
-# ==============================================================================
-# ۳. کالبدشکافی کانفیگ و تولید اثر انگشت یکتا (حذف هوشمند کانفیگ‌های مشابه)
-# ==============================================================================
-
 class ParsedConfig:
-    """کلاس نگه‌دارنده اطلاعات ساختاریافته هر کانفیگ برای مقایسه، تست و نام‌گذاری مجدد."""
-
     def __init__(
         self,
         protocol: str,
@@ -124,7 +98,6 @@ class ParsedConfig:
         self.country_code: str = "UN"
 
     def build_clean_uri(self, index: int) -> str:
-        """بازسازی کانفیگ با نام‌گذاری تمیز، پرچم کشور، نوع پروتکل و پینگ."""
         flag = country_code_to_flag(self.country_code)
         proto_label = self.protocol.upper()
         if self.security == "reality":
@@ -136,27 +109,20 @@ class ParsedConfig:
 
         remark = f"{flag} {self.country_code} | {proto_label} | {self.ping_ms}ms | {CUSTOM_TAG}-{index:03d}"
 
-        # اگر پروتکل VMess است، نام را در JSON داخلی تغییر می‌دهیم و دوباره Base64 می‌کنیم
         if self.protocol == "vmess" and self.vmess_dict is not None:
             updated_dict = dict(self.vmess_dict)
             updated_dict["ps"] = remark
             json_str = json.dumps(updated_dict, separators=(",", ":"), ensure_ascii=False)
             return "vmess://" + safe_base64_encode(json_str)
 
-        # برای سایر پروتکل‌ها (VLESS, Trojan, SS, Hysteria2, TUIC) بخش #fragment را جایگزین می‌کنیم
         base_part = self.raw_uri.split("#", 1)[0]
         encoded_remark = urllib.parse.quote(remark, safe="")
         return f"{base_part}#{encoded_remark}"
 
 
 def parse_and_fingerprint(raw_uri: str) -> Optional[ParsedConfig]:
-    """
-    کالبدشکافی لینک کانفیگ و تولید هش یکتا (Fingerprint) بر اساس مشخصات فنی سرور.
-    این تابع نام کانال‌ها و تبلیغات انتهای کانفیگ را کاملاً نادیده می‌گیرد تا کانفیگ‌های تکراری حذف شوند.
-    """
     try:
         uri = html.unescape(raw_uri.strip())
-
         if "://" not in uri:
             return None
 
@@ -167,7 +133,6 @@ def parse_and_fingerprint(raw_uri: str) -> Optional[ParsedConfig]:
             uri = "hy2://" + uri.split("://", 1)[1]
             scheme = "hy2"
 
-        # ---------------- ۱. پردازش اختصاصی پروتکل VMess ----------------
         if scheme == "vmess":
             b64_payload = uri.split("://", 1)[1].split("#", 1)[0]
             decoded_json = safe_base64_decode(b64_payload)
@@ -201,7 +166,6 @@ def parse_and_fingerprint(raw_uri: str) -> Optional[ParsedConfig]:
                 vmess_dict=data,
             )
 
-        # ---------------- ۲. پردازش اختصاصی پروتکل Shadowsocks ----------------
         if scheme == "ss":
             main_part = uri.split("://", 1)[1].split("#", 1)[0]
             if "@" in main_part:
@@ -237,7 +201,6 @@ def parse_and_fingerprint(raw_uri: str) -> Optional[ParsedConfig]:
                 security="ss",
             )
 
-        # ---------------- ۳. پردازش VLESS, Trojan, Hysteria2, TUIC ----------------
         if scheme in ("vless", "trojan", "hy2", "tuic"):
             split_res = urllib.parse.urlsplit(uri)
             host = split_res.hostname or ""
@@ -288,12 +251,7 @@ def parse_and_fingerprint(raw_uri: str) -> Optional[ParsedConfig]:
     return None
 
 
-# ==============================================================================
-# ۴. ماژول استخراج از تلگرام (وب و API) و منابع خارجی
-# ==============================================================================
-
 def extract_configs_from_text(text: str) -> List[str]:
-    """استخراج تمام لینک‌های کانفیگ از یک متن (شامل متن‌های کدگذاری شده با Base64)."""
     found: List[str] = []
     if not text:
         return found
@@ -313,7 +271,6 @@ def extract_configs_from_text(text: str) -> List[str]:
 
 
 async def fetch_telegram_web_channel(session: aiohttp.ClientSession, channel: str) -> List[str]:
-    """اسکرپ کردن صفحه وب عمومی کانال تلگرام (t.me/s/channel)."""
     clean_name = channel.strip().replace("@", "")
     clean_name = re.sub(r"^https?://t\.me/(?:s/)?", "", clean_name).strip("/")
     url = f"https://t.me/s/{clean_name}"
@@ -330,19 +287,14 @@ async def fetch_telegram_web_channel(session: aiohttp.ClientSession, channel: st
                 html_text = await resp.text()
                 text_only = re.sub(r"<[^>]+>", "\n", html_text)
                 configs = extract_configs_from_text(text_only)
-                print(f"[+] کانال وب '{clean_name}': {len(configs)} کانفیگ استخراج شد.")
+                print(f"[+] Channel '{clean_name}': {len(configs)} configs extracted.")
                 return configs
     except Exception as exc:
-        print(f"[-] خطا در دریافت کانال '{clean_name}': {exc}")
+        print(f"[-] Error fetching '{clean_name}': {exc}")
     return []
 
 
 async def fetch_via_telethon_if_configured(channels: List[str]) -> List[str]:
-    """
-    در صورتی که کاربر بخواهد از «گروه‌های تلگرامی» یا کانال‌های بدون پیش‌نمایش وب هم
-    استخراج کند، با قرار دادن TG_API_ID, TG_API_HASH, TG_STRING_SESSION در GitHub Secrets،
-    این تابع به صورت خودکار فعال می‌شود.
-    """
     api_id = os.getenv("TG_API_ID")
     api_hash = os.getenv("TG_API_HASH")
     string_session = os.getenv("TG_STRING_SESSION")
@@ -355,7 +307,6 @@ async def fetch_via_telethon_if_configured(channels: List[str]) -> List[str]:
         from telethon import TelegramClient
         from telethon.sessions import StringSession
 
-        print("[*] نشست Telethon شناسایی شد؛ در حال اسکن عمیق گروه‌ها و کانال‌ها...")
         async with TelegramClient(StringSession(string_session), int(api_id), api_hash) as client:
             for ch in channels:
                 try:
@@ -363,17 +314,14 @@ async def fetch_via_telethon_if_configured(channels: List[str]) -> List[str]:
                         if message.text:
                             collected.extend(extract_configs_from_text(message.text))
                 except Exception as e:
-                    print(f"[-] خطای Telethon در '{ch}': {e}")
-    except ImportError:
-        print("[!] کتابخانه Telethon نصب نیست؛ فقط از حالت وب استفاده می‌شود.")
+                    print(f"[-] Telethon error in '{ch}': {e}")
     except Exception as e:
-        print(f"[-] خطا در اتصال Telethon: {e}")
+        print(f"[-] Telethon connection error: {e}")
 
     return collected
 
 
 async def fetch_external_subscriptions(session: aiohttp.ClientSession, urls: List[str]) -> List[str]:
-    """دریافت کانفیگ از لینک‌های اشتراک خارجی."""
     results: List[str] = []
     for url in urls:
         if not url.strip():
@@ -384,22 +332,14 @@ async def fetch_external_subscriptions(session: aiohttp.ClientSession, urls: Lis
                     content = await resp.text()
                     results.extend(extract_configs_from_text(content))
         except Exception as e:
-            print(f"[-] خطا در دریافت لینک خارجی '{url}': {e}")
+            print(f"[-] External sub error '{url}': {e}")
     return results
 
-
-# ==============================================================================
-# ۵. موتور تست اتصال، دست‌دهی TLS و موقعیت‌یابی (GeoIP)
-# ==============================================================================
 
 async def test_single_config(
     cfg: ParsedConfig,
     semaphore: asyncio.Semaphore,
 ) -> Optional[ParsedConfig]:
-    """
-    تست واقعی دست‌دهی شبکه (TCP + TLS Handshake در صورت فعال بودن TLS/Reality)
-    و محاسبه دقیق پینگ (Latency) به میلی‌ثانیه.
-    """
     async with semaphore:
         start_time = time.perf_counter()
         try:
@@ -442,7 +382,6 @@ async def enrich_country_codes(
     session: aiohttp.ClientSession,
     configs: List[ParsedConfig],
 ) -> None:
-    """شناسایی کشور سرورها به صورت دسته‌ای (Batch GeoIP) برای درج پرچم دقیق."""
     host_to_ip: Dict[str, str] = {}
     unique_hosts = list({c.host for c in configs})
 
@@ -482,12 +421,7 @@ async def enrich_country_codes(
             cfg.country_code = ip_to_country[ip]
 
 
-# ==============================================================================
-# ۶. ذخیره خروجی‌ها (معمولی، Base64 و تفکیک‌شده بر اساس پروتکل)
-# ==============================================================================
-
 def write_subscription_files(verified_configs: List[ParsedConfig]) -> None:
-    """ذخیره فایل‌های اشتراک به هر دو صورت Plain Text و Base64."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     verified_configs.sort(key=lambda x: x.ping_ms)
@@ -509,29 +443,23 @@ def write_subscription_files(verified_configs: List[ParsedConfig]) -> None:
         if cfg.protocol in by_protocol:
             by_protocol[cfg.protocol].append(clean_uri)
 
-    # ۱. ذخیره فایل جامع (شامل تمام پروتکل‌ها)
     plain_content = "\n".join(all_clean_uris)
     b64_content = safe_base64_encode(plain_content)
 
     (OUTPUT_DIR / "all_configs.txt").write_text(plain_content, encoding="utf-8")
     (OUTPUT_DIR / "all_configs_base64.txt").write_text(b64_content, encoding="utf-8")
 
-    # ۲. ذخیره فایل‌های تفکیک‌شده برای هر پروتکل (هم معمولی و هم Base64)
     for proto, uris in by_protocol.items():
         proto_plain = "\n".join(uris)
         proto_b64 = safe_base64_encode(proto_plain) if uris else ""
         (OUTPUT_DIR / f"{proto}.txt").write_text(proto_plain, encoding="utf-8")
         (OUTPUT_DIR / f"{proto}_base64.txt").write_text(proto_b64, encoding="utf-8")
 
-    print(f"\n[✓] عملیات با موفقیت کامل شد! {len(all_clean_uris)} کانفیگ سالم و بدون تکرار ذخیره گردید.")
+    print(f"\n[✓] Done! Saved {len(all_clean_uris)} verified configs.")
 
-
-# ==============================================================================
-# ۷. تابع اصلی اجرای پایپ‌لاین
-# ==============================================================================
 
 async def main() -> None:
-    print("=== شروع فرآیند جمع‌آوری و پالایش هوشمند کانفیگ‌ها ===")
+    print("=== Starting V2Ray & Sing-box Collector ===")
 
     channels_file = Path("channels.txt")
     channels = list(TELEGRAM_CHANNELS)
@@ -547,23 +475,19 @@ async def main() -> None:
 
     raw_configs: List[str] = []
     async with aiohttp.ClientSession() as session:
-        # ۱. دریافت از پیش‌نمایش وب تلگرام
         web_tasks = [fetch_telegram_web_channel(session, ch) for ch in channels]
         web_results = await asyncio.gather(*web_tasks)
         for res in web_results:
             raw_configs.extend(res)
 
-        # ۲. دریافت از لینک‌های ساب خارجی
         ext_results = await fetch_external_subscriptions(session, EXTERNAL_SUB_URLS)
         raw_configs.extend(ext_results)
 
-        # ۳. دریافت از گروه‌ها و کانال‌ها از طریق Telethon (در صورت تنظیم کلیدها)
         telethon_results = await fetch_via_telethon_if_configured(channels)
         raw_configs.extend(telethon_results)
 
-        print(f"\n[*] مجموع کل کانفیگ‌های خام شکار شده: {len(raw_configs)}")
+        print(f"\n[*] Total raw configs found: {len(raw_configs)}")
 
-        # ۴. کالبدشکافی و حذف هوشمند کانفیگ‌های مشابه (Deduplication)
         unique_map: Dict[str, ParsedConfig] = {}
         for raw in raw_configs:
             parsed = parse_and_fingerprint(raw)
@@ -571,23 +495,18 @@ async def main() -> None:
                 unique_map[parsed.fingerprint] = parsed
 
         unique_configs = list(unique_map.values())
-        print(f"[*] تعداد کانفیگ‌های یکتا پس از حذف موارد تکراری: {len(unique_configs)}")
+        print(f"[*] Unique configs after deduplication: {len(unique_configs)}")
 
-        # ۵. تست همزمان سلامت و پینگ کانفیگ‌ها
-        print(f"[*] در حال تست اتصال و دست‌دهی امنیتی ({MAX_CONCURRENT_TESTS} تست همزمان)...")
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_TESTS)
         test_tasks = [test_single_config(cfg, semaphore) for cfg in unique_configs]
         tested_results = await asyncio.gather(*test_tasks)
 
         verified_configs = [cfg for cfg in tested_results if cfg is not None]
-        print(f"[*] تعداد کانفیگ‌های سالم و فعال: {len(verified_configs)}")
+        print(f"[*] Verified working configs: {len(verified_configs)}")
 
-        # ۶. شناسایی کشور و افزودن پرچم
         if verified_configs:
-            print("[*] در حال شناسایی موقعیت جغرافیایی (GeoIP) سرورها...")
             await enrich_country_codes(session, verified_configs)
 
-        # ۷. ساخت و ذخیره فایل‌های نهایی اشتراک
         write_subscription_files(verified_configs)
 
 
