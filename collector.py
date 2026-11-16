@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-سیستم جامع جمع‌آوری، پالایش، حذف موارد مشابه و تست هوشمند کانفیگ‌های V2Ray و Sing-box
-پشتیبانی از پروتکل‌های: VLESS (Reality/WS/gRPC/XHTTP), VMess, Trojan, Shadowsocks, Hysteria2, TUIC
-"""
-
 import asyncio
 import base64
 import hashlib
@@ -22,7 +17,6 @@ from typing import Dict, List, Optional
 
 import aiohttp
 
-# لیست کانال‌های تلگرامی
 TELEGRAM_CHANNELS: List[str] = [
     "https://t.me/LonUp_M",
     "https://t.me/prrofile_purple",
@@ -455,7 +449,7 @@ def write_subscription_files(verified_configs: List[ParsedConfig]) -> None:
         (OUTPUT_DIR / f"{proto}.txt").write_text(proto_plain, encoding="utf-8")
         (OUTPUT_DIR / f"{proto}_base64.txt").write_text(proto_b64, encoding="utf-8")
 
-    print(f"\n[✓] Done! Saved {len(all_clean_uris)} verified configs.")
+    print(f"\n[OK] Done! Saved {len(all_clean_uris)} verified configs.")
 
 
 async def main() -> None:
